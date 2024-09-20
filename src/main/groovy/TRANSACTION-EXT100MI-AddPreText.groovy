@@ -6,10 +6,11 @@
  *
  *  Date          Changed By            Version      Description
  *  2024-05-29    Frank Herman Wik      1.0          Initial Release
+ *  2024-09-19    Frank Herman Wik      1.0          Updated according to review comments
  *
  */
-import java.time.*;
-import java.time.format.*;
+import java.time.*
+import java.time.format.*
 
 public class AddPreText extends ExtendM3Transaction {
   private final MIAPI mi
@@ -19,9 +20,9 @@ public class AddPreText extends ExtendM3Transaction {
   private final LoggerAPI logger
   private final MICallerAPI miCaller
 
-  private String inOrderNumber, customer, businessChainLevel1, customerOrderLanguage, newTextID, permanentTextIdentity, permanentTextLanguage
-  boolean textHeadCreated, textLineCreated
-  int company, nrOfRecords
+  private String inOrderNumber, customer, businessChainLevel1, customerOrderLanguage, newTextID, permanentTextIdentity, permanentTextLanguage, pretext
+  boolean textHeadCreated, textLineCreated, textLineDeleted
+  int company, nrOfRecords, orderStatus
 
   public AddPreText(MIAPI mi, DatabaseAPI databaseAPI, ProgramAPI program, UtilityAPI util, LoggerAPI logger, MICallerAPI miCaller) {
     this.mi = mi
@@ -51,7 +52,17 @@ public class AddPreText extends ExtendM3Transaction {
 
     // Check if the customer order exists
     if (!getOOHEAD(company, inOrderNumber)) {
-      mi.error("Customer order number ${inOrderNumber} does not exists")
+      if (orderStatus == 90) {
+        mi.error("Order is deleted, add pretext is not permitted")
+      } else {
+        mi.error("Customer order number ${inOrderNumber} does not exists")
+      }
+      return
+    }
+
+    // Check if CO delivery status is valid
+    if (!deliveryLines(company, inOrderNumber)) {
+      mi.error("WARNING - Changes will not affect existing deliveries")
       return
     }
 
@@ -60,6 +71,12 @@ public class AddPreText extends ExtendM3Transaction {
 
     // If the permanent text identity is valid and the customer order language matches the permanent text language
     if (Integer.parseInt(permanentTextIdentity) > 0 && customerOrderLanguage == permanentTextLanguage) {
+      // Check if the pretext already exists
+      if (pretextExists(company, inOrderNumber)) {
+        logger.debug("pretextExists --> true")
+        // Delete pretext
+        deleteTxtBlockLines(company.toString(), "", pretext, "CO02", "", "OSYTXH", "")
+      }
       // Get a new text identity
       newTextID = getNewTextID("OSYTXH")
       logger.debug("newTextID = " + newTextID)
@@ -69,9 +86,60 @@ public class AddPreText extends ExtendM3Transaction {
 
       // If the text block header and lines were successfully created, update the customer order head with the new text identity
       if (textHeadCreated && textLineCreated) {
-        updateOOHEAD(company, inOrderNumber)
+        updatePretext(company, inOrderNumber, newTextID)
       }
     }
+  }
+
+  /**
+   * Checks if the pretext already exists for the given order number.
+   *
+   * @param company The company number.
+   * @param orderNumber The order number.
+   * @return {@code true} if the pretext exists, {@code false} otherwise.
+   */
+  private boolean pretextExists(int company, String orderNumber) {
+    DBAction query = database.table("OOHEAD").index("00").selection("OAPRTX").build()
+    DBContainer container = query.getContainer()
+
+    container.set("OACONO", company)
+    container.set("OAORNO", orderNumber)
+
+    if (query.read(container)) {
+      pretext = container.get("OAPRTX").toString()
+      logger.debug("pretext = " + pretext)
+      return pretext != null && !pretext.trim().isEmpty()
+    }
+    return false
+  }
+
+  /**
+   * Updates the existing pretext for the given order number.
+   *
+   * @param company The company number.
+   * @param orderNumber The order number.
+   * @param textIdentity The identity of the text to be updated.
+   */
+  private void updatePretext(int company, String orderNumber, String textIdentity) {
+    DBAction query = database.table("OOHEAD").index("00").selection("OAPRTX").build()
+    DBContainer container = query.getContainer()
+
+    container.set("OACONO", company)
+    container.set("OAORNO", orderNumber)
+
+    Closure<?> updateCallBack = { LockedResult lockedResult ->
+      lockedResult.set("OAPRTX", Long.parseLong(textIdentity))
+      lockedResult.set("OALMDT", LocalDate.now().format(DateTimeFormatter.ofPattern("yyyyMMdd")).toInteger())
+      lockedResult.set("OACHNO", ((int) lockedResult.get("OACHNO")) + 1)
+      lockedResult.set("OACHID", program.getUser())
+      lockedResult.update()
+    }
+
+    if (!query.readLock(container, updateCallBack)) {
+      mi.error("Could not update OOHEAD with new values")
+      return
+    }
+    logger.debug("OOHEAD record updated successfully. New pretext value = " + textIdentity)
   }
 
   /**
@@ -99,7 +167,7 @@ public class AddPreText extends ExtendM3Transaction {
 
       Closure<?> readOSYTXL  = { DBContainer getOSYTXL ->
         // Add text block line
-        addTxtBlockLine("OOHEAD00", newTextID, "OSYTXH", getOSYTXL.getString("TLTX60"), company.toString(), "", "", "CO02");
+        addTxtBlockLine("OOHEAD00", newTextID, "OSYTXH", getOSYTXL.getString("TLTX60"), company.toString(), "", "", "CO02")
       }
 
       dbaOSYTXL.readAll(conOSYTXL, 5, nrOfRecords, readOSYTXL)
@@ -133,6 +201,7 @@ public class AddPreText extends ExtendM3Transaction {
       if (getODTXTH.getInt("UVTXDO") == 3 && getODTXTH.getInt("UVTXPR") == 1 && today <= getODTXTH.getInt("UVENDT")) {
         permanentTextIdentity = getODTXTH.get("UVTXID").toString().trim()
         permanentTextLanguage = getODTXTH.getString("UVLNCD").trim()
+        logger.debug("permanentTextIdentity/permanentTextLanguage = " + permanentTextIdentity + "/" + permanentTextLanguage)
       }
     }
 
@@ -172,7 +241,7 @@ public class AddPreText extends ExtendM3Transaction {
       mi.error("Could not update OOHEAD with new values")
       return
     }
-    logger.debug("OOHEAD record updated successfully");
+    logger.debug("OOHEAD record updated successfully")
   }
 
   /**
@@ -183,19 +252,51 @@ public class AddPreText extends ExtendM3Transaction {
    * @return {@code true} if the order exists in the database, {@code false} otherwise.
    */
   private boolean getOOHEAD(int cono, String orno) {
-    DBAction query = database.table("OOHEAD").index("00").selection("OACUNO", "OALNCD", "OACHL1").build()
+    DBAction query = database.table("OOHEAD").index("00").selection("OACUNO", "OALNCD", "OACHL1", "OAORST").build()
     DBContainer container = query.getContainer()
 
     container.set("OACONO", cono)
     container.set("OAORNO", orno)
 
     if (query.read(container)) {
+      orderStatus = Integer.parseInt(container.get("OAORST").toString())
+      if (orderStatus == 90) {
+        return false
+      }
       customer = container.getString("OACUNO").trim()
       customerOrderLanguage = container.getString("OALNCD").trim()
       businessChainLevel1 = container.getString("OACHL1").trim()
       return true
     }
     return false
+  }
+
+  /**
+   * Checks if the delivery lines for a given company and order number meet specific criteria.
+   *
+   * @param cono The company number.
+   * @param orno The order number.
+   * @return {@code true} if the order status is less than 68, {@code false} otherwise.
+   */
+  public boolean deliveryLines(int cono, String orno) {
+    boolean result = false
+    DBAction query = database.table("ODHEAD").index("35").selection("UAORST").build()
+    DBContainer container = query.getContainer()
+
+    container.set("UACONO", cono)
+    container.set("UAORNO", orno)
+
+    Closure<?> readODHEAD  = { DBContainer getODHEAD ->
+      if (getODHEAD.getInt("UAORST") < 68) {
+        result = true
+      }
+    }
+
+    if (!query.readAll(container, 2, nrOfRecords, readODHEAD)) {
+      return true
+    }
+
+    return result
   }
 
   /**
@@ -207,11 +308,11 @@ public class AddPreText extends ExtendM3Transaction {
   private String getNewTextID(String file) {
     final HashMap<String, String> inputRtvNewTextID = new HashMap<>()
     inputRtvNewTextID.put("FILE", file)
-    String out = "";
+    String out = ""
     miCaller.call("CRS980MI", "RtvNewTextID", inputRtvNewTextID, { final output ->
       if(output["errorMessage"] != null && output["errorMessage"].toString() != "" ){
         logger.debug("CRS980MI - RtvNewTextID, errror message: " + output["errorMessage"].toString())
-        out = "";
+        out = ""
       } else {
         out = output["TXID"].toString().trim()
       }
@@ -276,7 +377,7 @@ public class AddPreText extends ExtendM3Transaction {
   private String addTxtBlockLine(String file, String textIdentity, String transferFile, String text, String company, String language, String division, String textBlock) {
     if (text.length() > 60) {
       logger.debug("addTxtBlockLine - text length = " + text.length())
-      text = text.toString().substring(0, 60);
+      text = text.toString().substring(0, 60)
       logger.debug("addTxtBlockLine - text, substring 0-60 = " + text)
     }
 
@@ -300,5 +401,27 @@ public class AddPreText extends ExtendM3Transaction {
       }
     })
     textLineCreated = true
+  }
+
+  private String deleteTxtBlockLines(String company, String division, String textIdentity, String textBlock, String language, String transferFile, String file) {
+    final HashMap<String, String> inputDltTxtBlockLins = new HashMap<>()
+    inputDltTxtBlockLins.put("CONO", company)
+    inputDltTxtBlockLins.put("DIVI", division)
+    inputDltTxtBlockLins.put("TXID", textIdentity)
+    inputDltTxtBlockLins.put("TXVR", textBlock)
+    inputDltTxtBlockLins.put("LNCD", language)
+    inputDltTxtBlockLins.put("TFIL", transferFile)
+    inputDltTxtBlockLins.put("FILE", file)
+
+    logger.debug("run CRS980MI.DltTxtBlockLins")
+
+    miCaller.call("CRS980MI", "DltTxtBlockLins", inputDltTxtBlockLins, { final output ->
+      if(output["errorMessage"] != null && output["errorMessage"].toString() != "" ){
+        logger.debug("CRS980MI - DltTxtBlockLins, errror message: " + output["errorMessage"].toString())
+        textLineCreated = false
+        return
+      }
+    })
+    textLineDeleted = true
   }
 }

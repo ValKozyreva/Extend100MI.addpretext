@@ -7,6 +7,7 @@
  *  Date          Changed By            Version      Description
  *  2024-05-29    Frank Herman Wik      1.0          Initial Release
  *  2024-09-19    Frank Herman Wik      1.0          Updated according to review comments
+ *  2024-09-26    Frank Herman Wik      1.0          Correction
  *
  */
 import java.time.*
@@ -287,7 +288,7 @@ public class AddPreText extends ExtendM3Transaction {
     container.set("UAORNO", orno)
 
     Closure<?> readODHEAD  = { DBContainer getODHEAD ->
-      if (getODHEAD.getInt("UAORST") < 68) {
+      if (Integer.parseInt(getODHEAD.get("UAORST").toString()) < 68) {
         result = true
       }
     }

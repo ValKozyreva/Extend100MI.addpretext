@@ -8,6 +8,7 @@
  *  2024-05-29    Frank Herman Wik      1.0          Initial Release
  *  2024-09-19    Frank Herman Wik      1.0          Updated according to review comments
  *  2024-09-26    Frank Herman Wik      1.0          Correction
+ *  2024-09-27    Frank Herman Wik      1.0          Added Javadoc to method deleteTxtBlockLines
  *
  */
 import java.time.*
@@ -404,6 +405,17 @@ public class AddPreText extends ExtendM3Transaction {
     textLineCreated = true
   }
 
+  /**
+   * Deletes text block lines using the CRS980MI DltTxtBlockLins method.
+   *
+   * @param company       The company code.
+   * @param division      The division code.
+   * @param textIdentity  The identity of the text block.
+   * @param textBlock     The text block version.
+   * @param language      The language code.
+   * @param transferFile  The transfer file.
+   * @param file          The file associated with the text block.
+   */
   private String deleteTxtBlockLines(String company, String division, String textIdentity, String textBlock, String language, String transferFile, String file) {
     final HashMap<String, String> inputDltTxtBlockLins = new HashMap<>()
     inputDltTxtBlockLins.put("CONO", company)

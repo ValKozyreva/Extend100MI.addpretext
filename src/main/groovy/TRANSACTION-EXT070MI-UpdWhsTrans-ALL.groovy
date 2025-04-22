@@ -6,6 +6,7 @@
  *
  *  Date          Changed By            Version      Description
  *  2025-02-06    Frank Herman Wik      1.0          Initial Release
+ *  2025-04-15    Frank Herman Wik      1.1          Added page size to readAll
  *
  */
 public class UpdWhsTrans extends ExtendM3Transaction {
@@ -14,8 +15,9 @@ public class UpdWhsTrans extends ExtendM3Transaction {
   private final ProgramAPI program
   private final LoggerAPI logger
 
-  String warehouse, location, orderNumber, orderLine, deliveryNumber, itemNumber, serialNumber, countryOfOrigin, messageType
+  String warehouse, location, orderNumber, orderLine, deliveryNumber, itemNumber, serialNumber, countryOfOrigin
   int company
+  int nbrOfRecords = 10000
 
   public UpdWhsTrans(MIAPI mi, DatabaseAPI databaseAPI, ProgramAPI program, LoggerAPI logger) {
     this.mi = mi
@@ -78,7 +80,7 @@ public class UpdWhsTrans extends ExtendM3Transaction {
     }
 
     // Read the record to check if it exists
-    checkQuery.readAll(checkContainer, 3, readCallback)
+    checkQuery.readAll(checkContainer, 3, nbrOfRecords, readCallback)
 
     if (recordExists) {
       mi.error("Serial number ${serialNumber} already exists in MITTRA for order number ${orderNumber} and order line ${orderLine}")
